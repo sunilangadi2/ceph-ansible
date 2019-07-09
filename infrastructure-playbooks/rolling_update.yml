@@ -38,23 +38,24 @@
 
 
 - name: gather facts and check the init system
-
   hosts:
-    - "{{ mon_group_name|default('mons') }}"
-    - "{{ osd_group_name|default('osds') }}"
-    - "{{ mds_group_name|default('mdss') }}"
-    - "{{ rgw_group_name|default('rgws') }}"
-    - "{{ mgr_group_name|default('mgrs') }}"
-    - "{{ rbd_mirror_group_name|default('rbdmirrors') }}"
-    - "{{ nfs_group_name|default('nfss') }}"
-    - "{{ client_group_name|default('clients') }}"
-    - "{{ iscsi_gw_group_name|default('iscsigws') }}"
-
+    - "{{ mon_group_name | default('mons') }}"
+    - "{{ osd_group_name | default('osds') }}"
+    - "{{ mds_group_name | default('mdss') }}"
+    - "{{ rgw_group_name | default('rgws') }}"
+    - "{{ mgr_group_name | default('mgrs') }}"
+    - "{{ rbdmirror_group_name | default('rbdmirrors') }}"
+    - "{{ nfs_group_name | default('nfss') }}"
+    - "{{ client_group_name | default('clients') }}"
+    - "{{ iscsi_gw_group_name | default('iscsigws') }}"
   become: True
   gather_facts: False
   vars:
     delegate_facts_host: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     - debug: msg="gather facts on all Ceph hosts for following reference"
 
     - name: gather facts
@@ -71,15 +72,19 @@
 
     - set_fact: rolling_update=true
 
+
 - name: upgrade ceph mon cluster
   vars:
     health_mon_check_retries: 5
     health_mon_check_delay: 15
     upgrade_ceph_packages: True
-  hosts: "{{ mon_group_name|default('mons') }}"
+  hosts: "{{ mon_group_name | default('mons') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     - name: remove ceph aliases
       file:
         path: /etc/profile.d/ceph-aliases.sh
@@ -99,8 +104,6 @@
       set_fact:
         mon_host: "{{ groups[mon_group_name] | difference([inventory_hostname]) | last }}"
 
-    - import_role:
-        name: ceph-defaults
     - import_role:
         name: ceph-facts
 
@@ -207,14 +210,18 @@
 
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-mon
 
@@ -266,7 +273,7 @@
 
 
 - name: reset mon_host
-  hosts: "{{ mon_group_name|default('mons') }}"
+  hosts: "{{ mon_group_name | default('mons') }}"
   become: True
   tasks:
     - import_role:
@@ -282,10 +289,13 @@
     health_mon_check_retries: 5
     health_mon_check_delay: 15
     upgrade_ceph_packages: True
-  hosts: "{{ mon_group_name|default('mons') }}"
+  hosts: "{{ mon_group_name | default('mons') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     - name: upgrade mgrs when no mgr group explicitly defined in inventory
       when: groups.get(mgr_group_name, []) | length == 0
       block:
@@ -296,30 +306,36 @@
             masked: yes
 
         - import_role:
-            name: ceph-defaults
-        - import_role:
             name: ceph-facts
+
         - import_role:
             name: ceph-handler
+
         - import_role:
             name: ceph-common
           when: not containerized_deployment | bool
+
         - import_role:
             name: ceph-container-common
           when: containerized_deployment | bool
+
         - import_role:
             name: ceph-config
+
         - import_role:
             name: ceph-mgr
+
 
 - name: upgrade ceph mgr nodes
   vars:
     upgrade_ceph_packages: True
     ceph_release: "{{ ceph_stable_release }}"
-  hosts: "{{ mgr_group_name|default('mgrs') }}"
+  hosts: "{{ mgr_group_name | default('mgrs') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
     # The following task has a failed_when: false
     # to handle the scenario where no mgr existed before the upgrade
     # or if we run a Ceph cluster before Luminous
@@ -332,19 +348,22 @@
       failed_when: false
 
     - import_role:
-        name: ceph-defaults
-    - import_role:
         name: ceph-facts
+
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-mgr
 
@@ -355,10 +374,13 @@
     health_osd_check_delay: 30
     upgrade_ceph_packages: True
 
-  hosts: "{{ osd_group_name|default('osds') }}"
+  hosts: "{{ osd_group_name | default('osds') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     - name: get osd numbers - non container
       shell: "if [ -d /var/lib/ceph/osd ] ; then ls /var/lib/ceph/osd | sed 's/.*-//' ; fi"
       register: osd_ids
@@ -391,19 +413,22 @@
       when: not containerized_deployment | bool
 
     - import_role:
-        name: ceph-defaults
-    - import_role:
         name: ceph-facts
+
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-osd
 
@@ -491,14 +516,12 @@
 
 
 - name: unset osd flags
-
-  hosts: "{{ mon_group_name|default('mons') }}"
-
+  hosts: "{{ mon_group_name | default('mons') }}"
   become: True
-
   tasks:
     - import_role:
         name: ceph-defaults
+
     - import_role:
         name: ceph-facts
 
@@ -533,13 +556,17 @@
         - (ceph_versions.get('stdout', '{}')|from_json).get('osd', {}) | length == 1
         - ceph_versions_osd | string is search("ceph version 12")
 
+
 - name: upgrade ceph mdss cluster
   vars:
     upgrade_ceph_packages: True
-  hosts: "{{ mds_group_name|default('mdss') }}"
+  hosts: "{{ mds_group_name | default('mdss') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     - name: stop ceph mds
       systemd:
         name: ceph-mds@{{ ansible_hostname }}
@@ -549,19 +576,22 @@
       when: not containerized_deployment | bool
 
     - import_role:
-        name: ceph-defaults
-    - import_role:
         name: ceph-facts
+
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-mds
 
@@ -586,13 +616,13 @@
 - name: upgrade ceph rgws cluster
   vars:
     upgrade_ceph_packages: True
-  hosts: "{{ rgw_group_name|default('rgws') }}"
+  hosts: "{{ rgw_group_name | default('rgws') }}"
   serial: 1
   become: True
   tasks:
-
     - import_role:
         name: ceph-defaults
+
     - import_role:
         name: ceph-facts
 
@@ -615,14 +645,18 @@
 
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-rgw
 
@@ -640,10 +674,13 @@
 - name: upgrade ceph rbd mirror node
   vars:
     upgrade_ceph_packages: True
-  hosts: "{{ rbd_mirror_group_name|default('rbdmirrors') }}"
+  hosts: "{{ rbdmirror_group_name | default('rbdmirrors') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     - name: stop ceph rbd mirror
       systemd:
         name: "ceph-rbd-mirror@rbd-mirror.{{ ansible_hostname }}"
@@ -652,19 +689,22 @@
         masked: yes
 
     - import_role:
-        name: ceph-defaults
-    - import_role:
         name: ceph-facts
+
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-rbd-mirror
 
@@ -689,10 +729,13 @@
 - name: upgrade ceph nfs node
   vars:
     upgrade_ceph_packages: True
-  hosts: "{{ nfs_group_name|default('nfss') }}"
+  hosts: "{{ nfs_group_name | default('nfss') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     # failed_when: false is here so that if we upgrade
     # from a version of ceph that does not have nfs-ganesha
     # then this task will not fail
@@ -706,19 +749,22 @@
       when: not containerized_deployment | bool
 
     - import_role:
-        name: ceph-defaults
-    - import_role:
         name: ceph-facts
+
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-nfs
 
@@ -747,12 +793,13 @@
 - name: upgrade ceph iscsi gateway node
   vars:
     upgrade_ceph_packages: True
-  hosts:
-    - "{{ iscsi_gw_group_name|default('iscsigws') }}"
-    - iscsi-gws # for backward compatibility only!
+  hosts: "{{ iscsi_gw_group_name | default('iscsigws') }}"
   serial: 1
   become: True
   tasks:
+    - import_role:
+        name: ceph-defaults
+
     # failed_when: false is here so that if we upgrade
     # from a version of ceph that does not have iscsi gws
     # then this task will not fail
@@ -770,19 +817,22 @@
       when: not containerized_deployment | bool
 
     - import_role:
-        name: ceph-defaults
-    - import_role:
         name: ceph-facts
+
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-iscsi-gw
 
@@ -802,26 +852,33 @@
 - name: upgrade ceph client node
   vars:
     upgrade_ceph_packages: True
-  hosts: "{{ client_group_name|default('clients') }}"
+  hosts: "{{ client_group_name | default('clients') }}"
   serial: "{{ client_update_batch | default(20) }}"
   become: True
   tasks:
     - import_role:
         name: ceph-defaults
+
     - import_role:
         name: ceph-facts
+
     - import_role:
         name: ceph-handler
+
     - import_role:
         name: ceph-common
       when: not containerized_deployment | bool
+
     - import_role:
         name: ceph-container-common
       when: containerized_deployment | bool
+
     - import_role:
         name: ceph-config
+
     - import_role:
         name: ceph-client
+
 
 - name: complete upgrade
   hosts: all
@@ -829,6 +886,7 @@
   tasks:
     - import_role:
         name: ceph-defaults
+
     - import_role:
         name: ceph-facts
 
@@ -858,15 +916,15 @@
 
     - import_role:
         name: ceph-handler
-    - name: import_role ceph-config
-      import_role:
+
+    - import_role:
         name: ceph-config
       vars:
         msgr2_migration: True
 
 
 - name: show ceph status
-  hosts: "{{ mon_group_name|default('mons') }}"
+  hosts: "{{ mon_group_name | default('mons') }}"
   become: True
   tasks:
     - import_role:
