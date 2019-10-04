@@ -495,15 +495,26 @@ rgw_multisite: false
 #
 # rgw_zone is set to "default" to enable compression for clusters configured without rgw multi-site
 # If multisite is configured rgw_zone should not be set to "default". See README-MULTISITE.md for an example.
+#
+# rgw_zonegroupmaster specifies the zonegroup will be the master zonegroup in a realm. There can only be one master zonegroup in a realm
+# rgw_zonegroupdefault specifies that the zonegroup will be the default zonegroup in a realm. If a zonegroup is default that means it is the only zonegroup in a realm.
+# rgw_zonedefault specifies that the zonegroup will be the default zone in a cluster. If a zone is default that means it is the only zone in a cluster in a realm.
+#
+# To create multiple realms and/or multiple zonegroups and/or multiple zones on a single Ceph cluster the following rgw multisite variables must go into host specific files in host_vars/.
+# See README-MULTISITE.md for information on creating multiple realms/zonegroups/zones in a cluster.
 rgw_zone: default
 
 rgw_zonemaster: true
 rgw_zonesecondary: false
+rgw_zonedefault: true
 rgw_multisite_proto: "http"
 rgw_multisite_endpoint_addr: "{{ ansible_fqdn }}"
 #rgw_multisite_endpoints_list: "{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}"
 #rgw_zonegroup: solarsystem # should be set by the user
+rgw_zonegroupmaster: true
+rgw_zonegroupdefault: true
 #rgw_zone_user: zone.user
+#rgw_zone_user_display_name: "Zone User"
 #rgw_realm: milkyway # should be set by the user
 #system_access_key: 6kWkikvapSnHyE22P7nO # should be re-created by the user
 #system_secret_key: MGecsMrWtKZgngOHZdrd6d3JxGO5CPWgT2lcnpSt # should be re-created by the user

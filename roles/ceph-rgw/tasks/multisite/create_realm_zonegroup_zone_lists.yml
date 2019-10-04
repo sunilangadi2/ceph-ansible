@@ -1,0 +1,55 @@
+- name: create list realms
+  set_fact:
+    realms: "{{ realms | default([]) + [{ 'realm': hostvars[item]['rgw_realm'] }] }}"
+  with_items: "{{ groups.get('rgws', []) }}"
+  run_once: true
+  when: "'No such file or directory' in hostvars[item]['realmcheck'].stderr"
+
+- name: make all items in realms unique
+  set_fact:
+    realms: "{{ realms | unique }}"
+  run_once: true
+  when: realms is defined
+
+- name: create list secondary_realms
+  set_fact:
+    secondary_realms: "{{ secondary_realms | default([]) + [{ 'realm': hostvars[item]['rgw_realm'], 'is_master': hostvars[item]['rgw_zonemaster'], 'endpoint': hostvars[item]['rgw_pull_proto'] + '://' + hostvars[item]['rgw_pullhost'] + ':' + hostvars[item]['rgw_pull_port']|string, 'access_key': hostvars[item]['system_access_key'], 'secret_key': hostvars[item]['system_secret_key'] }] }}"
+  with_items: "{{ groups.get('rgws', []) }}"
+  run_once: true
+  when: 
+    - hostvars[item]['rgw_zonemaster'] == false
+    - "'No such file or directory' in hostvars[item]['realmcheck'].stderr"
+
+- name: make all items in secondary_realms unique
+  set_fact:
+    secondary_realms: "{{ secondary_realms | unique }}"
+  run_once: true
+  when: secondary_realms is defined
+
+- name: create list zonegroups
+  set_fact:
+    zonegroups: "{{ zonegroups | default([]) + [{ 'realm': hostvars[item]['rgw_realm'], 'zonegroup': hostvars[item]['rgw_zonegroup'], 'is_master': hostvars[item]['rgw_zonegroupmaster'], 'is_default': hostvars[item]['rgw_zonegroupdefault'], 'endpoint': hostvars[item]['rgw_multisite_proto'] + '://' + hostvars[item]['rgw_multisite_endpoint_addr'] + ':' + hostvars[item]['radosgw_frontend_port']|string }] }}"
+  with_items: "{{ groups.get('rgws', []) }}"
+  run_once: true
+  when: 
+    - hostvars[item]['rgw_zonemaster'] == true
+    - "'No such file or directory' in hostvars[item]['zonegroupcheck'].stderr"
+
+- name: make all items in zonegroups unique
+  set_fact:
+    zonegroups: "{{ zonegroups | unique }}"
+  run_once: true
+  when: zonegroups is defined
+
+- name: create list zones
+  set_fact:
+    zones: "{{ zones | default([]) + [{ 'realm': hostvars[item]['rgw_realm'], 'zonegroup': hostvars[item]['rgw_zonegroup'], 'zone': hostvars[item]['rgw_zone'], 'is_master': hostvars[item]['rgw_zonemaster'], 'is_default': hostvars[item]['rgw_zonedefault'], 'endpoint': hostvars[item]['rgw_multisite_proto'] + '://' + hostvars[item]['rgw_multisite_endpoint_addr'] + ':' + hostvars[item]['radosgw_frontend_port']|string, 'access_key': hostvars[item]['system_access_key'], 'secret_key': hostvars[item]['system_secret_key'] }] }}"
+  with_items: "{{ groups.get('rgws', []) }}"
+  run_once: true
+  when: "'No such file or directory' in hostvars[item]['zonecheck'].stderr"
+
+- name: make all items in zones unique
+  set_fact:
+    zones: "{{ zones | unique }}"
+  run_once: true
+  when: zones is defined

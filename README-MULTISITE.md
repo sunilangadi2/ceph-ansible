@@ -1,7 +1,9 @@
 RGW Multisite
 =============
 
-Directions for configuring the RGW Multisite support in ceph-ansible
+Directions for configuring the RGW Multisite in ceph-ansible. Multisite can be configured either over multiple Ceph clusters or in a single Ceph cluster.
+
+# Multiple Ceph Clusters
 
 ## Requirements
 
@@ -32,11 +34,14 @@ copy_admin_key: true
 rgw_multisite: true
 rgw_zone: jupiter
 rgw_zonemaster: true
+rgw_zonedefault: true
 rgw_zonesecondary: false
 rgw_multisite_proto: "http"
 rgw_multisite_endpoint_addr: "{{ ansible_fqdn }}"
 rgw_multisite_endpoints_list: "{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}"
 rgw_zonegroup: solarsystem
+rgw_zonegroupmaster: true
+rgw_zonegroupdefault: true
 rgw_zone_user: zone.user
 rgw_realm: milkyway
 system_access_key: 6kWkikvapSnHyE22P7nO
@@ -54,6 +59,11 @@ system_secret_key: MGecsMrWtKZgngOHZdrd6d3JxGO5CPWgT2lcnpSt
 `{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}`<br/>
 for example: `rgw_multisite_endpoints: http://foo.example.com:8080,http://bar.example.com:8080,http://baz.example.com:8080`
 
+**Note:** `rgw_zonegroupmaster` specifies the zonegroup will be the master zonegroup in a realm. There can only be one master zonegroup in a realm. This variable is set to true by default in group_vars/all.yml since only 1 zonegroup will be created if `rgw_zonegroup` is the same accross all rgw hosts in the inventory.
+
+**Note:** `rgw_zonegroupdefault` specifies that the zonegroup will be the default zonegroup in a realm. If a zonegroup is default that means it is the only zonegroup in a realm. This variable is set to true by default in group_vars/all.yml since only 1 zonegroup will be created if `rgw_zonegroup` is the same accross all rgw hosts in the inventory.
+
+**Note:** `rgw_zonedefault` specifies that the zonegroup will be the default zone in a cluster. If a zone is default that means it is the only zone in a realm in a cluster. This variable is set to true by default in group_vars/all.yml since only 1 zone will be created if `rgw_zone` is the same accross all rgw hosts in the inventory.
 
 3. Run the ceph-ansible playbook on your 1st cluster
 
@@ -67,11 +77,14 @@ copy_admin_key: true
 rgw_multisite: true
 rgw_zone: mars
 rgw_zonemaster: false
+rgw_zonedefault: true
 rgw_zonesecondary: true
 rgw_multisite_proto: "http"
 rgw_multisite_endpoint_addr: "{{ ansible_fqdn }}"
 rgw_multisite_endpoints_list: "{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}"
 rgw_zonegroup: solarsystem
+rgw_zonegroupmaster: true
+rgw_zonegroupdefault: true
 rgw_zone_user: zone.user
 rgw_realm: milkyway
 system_access_key: 6kWkikvapSnHyE22P7nO
@@ -87,7 +100,10 @@ rgw_pullhost: cluster0-rgw0
 
 **Note:** `rgw_zone_user`, `system_access_key`, and `system_secret_key` should match what you used in the Primary Cluster
 
-**Note:** `ansible_fqdn` domain name assigned to `rgw_multisite_endpoint_addr` must be resolvable from the Primary Ceph cluster's mon and rgw node(s)
+**Note:** `ansible_fqdn` domain name assigned to `rgw_multisite_endpoint_addr` must be resolvable from the Primary Ceph clusters mon and rgw node(s)
+
+**Note:** `rgw_zonedefault` is still set to true here since only 1 zone being created on the 2nd cluster. Even though there is only 1 realm in this deployment (galaxy), mars can still be a default zone because it is the only zone on the 2nd cluster.
+
 
 **Note:** if there is more than 1 RGW in the Secondary Cluster, `rgw_multisite_endpoints` needs to be set with the RGWs in the Secondary Cluster just like it was set in the Primary Cluster
 
@@ -96,3 +112,5 @@ rgw_pullhost: cluster0-rgw0
 ## Conclusion
 
 You should now have a master zone on cluster0 and a secondary zone on cluster1 in an Active-Active mode.
+
+# A Single Ceph
