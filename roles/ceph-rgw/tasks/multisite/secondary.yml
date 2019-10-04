@@ -31,9 +31,3 @@
     - zones is defined
     - item.is_master == false and item.is_default == false
   notify: update period
-
-- name: add other endpoints to the zone
-  command: "{{ container_exec_cmd }} radosgw-admin zone modify --rgw-realm={{ rgw_realm }} --rgw-zonegroup={{ rgw_zonegroup }} --rgw-zone={{ rgw_zone }} --endpoints {{ rgw_multisite_endpoints_list }}"
-  delegate_to: "{{ groups[mon_group_name][0] }}"
-  when: rgw_multisite_endpoints_list is defined
-  notify: update period

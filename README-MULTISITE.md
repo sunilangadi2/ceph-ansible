@@ -38,7 +38,6 @@ rgw_zonedefault: true
 rgw_zonesecondary: false
 rgw_multisite_proto: "http"
 rgw_multisite_endpoint_addr: "{{ ansible_fqdn }}"
-rgw_multisite_endpoints_list: "{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}"
 rgw_zonegroup: solarsystem
 rgw_zonegroupmaster: true
 rgw_zonegroupdefault: true
@@ -53,11 +52,6 @@ system_secret_key: MGecsMrWtKZgngOHZdrd6d3JxGO5CPWgT2lcnpSt
 **Note:** replace the `system_access_key` and `system_secret_key` values with the ones you generated
 
 **Note:** `ansible_fqdn` domain name assigned to `rgw_multisite_endpoint_addr` must be resolvable from the secondary Ceph clusters mon and rgw node(s)
-
-**Note:** if there is more than 1 RGW in the cluster, `rgw_multisite_endpoints` needs to be set.<br/>
-`rgw_multisite_endpoints` is a comma seperated list, with no spaces, of the RGW endpoints in the format:<br/>
-`{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}`<br/>
-for example: `rgw_multisite_endpoints: http://foo.example.com:8080,http://bar.example.com:8080,http://baz.example.com:8080`
 
 **Note:** `rgw_zonegroupmaster` specifies the zonegroup will be the master zonegroup in a realm. There can only be one master zonegroup in a realm. This variable is set to true by default in group_vars/all.yml since only 1 zonegroup will be created if `rgw_zonegroup` is the same accross all rgw hosts in the inventory.
 
@@ -81,7 +75,6 @@ rgw_zonedefault: true
 rgw_zonesecondary: true
 rgw_multisite_proto: "http"
 rgw_multisite_endpoint_addr: "{{ ansible_fqdn }}"
-rgw_multisite_endpoints_list: "{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}"
 rgw_zonegroup: solarsystem
 rgw_zonegroupmaster: true
 rgw_zonegroupdefault: true
@@ -104,8 +97,6 @@ rgw_pullhost: cluster0-rgw0
 
 **Note:** `rgw_zonedefault` is still set to true here since only 1 zone being created on the 2nd cluster. Even though there is only 1 realm in this deployment (galaxy), mars can still be a default zone because it is the only zone on the 2nd cluster.
 
-
-**Note:** if there is more than 1 RGW in the Secondary Cluster, `rgw_multisite_endpoints` needs to be set with the RGWs in the Secondary Cluster just like it was set in the Primary Cluster
 
 5. Run the ceph-ansible playbook on your 2nd cluster
 
