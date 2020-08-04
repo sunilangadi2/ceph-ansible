@@ -29,6 +29,7 @@ dummy:
 #  mimic: 13
 #  nautilus: 14
 #  octopus: 15
+#  pacific: 16
 #  dev: 99
 
 # Directory to fetch cluster fsid, keys etc...
@@ -85,7 +86,7 @@ dummy:
 
 #centos_package_dependencies:
 #  - epel-release
-#  - libselinux-python
+#  - "{{ 'python3-libselinux' if ansible_distribution_major_version | int >= 8 else 'libselinux-python' }}"
 
 #redhat_package_dependencies: []
 
@@ -99,15 +100,7 @@ dummy:
 #ntp_service_enabled: true
 
 # Set type of NTP client daemon to use, valid entries are chronyd, ntpd or timesyncd
-# Note that this selection is currently ignored on containerized deployments
 #ntp_daemon_type: chronyd
-
-
-# Set uid/gid to default '64045' for bootstrap directories.
-# '64045' is used for debian based distros. It must be set to 167 in case of rhel based distros.
-# These values have to be set according to the base OS used by the container image, NOT the host.
-#bootstrap_dirs_owner: "64045"
-#bootstrap_dirs_group: "64045"
 
 # This variable determines if ceph packages can be updated.  If False, the
 # package resources will use "state=present".  If True, they will use
@@ -115,7 +108,7 @@ dummy:
 #upgrade_ceph_packages: False
 
 #ceph_use_distro_backports: false # DEBIAN ONLY
-
+#ceph_directories_mode: "0755"
 
 ###########
 # INSTALL #
@@ -156,7 +149,7 @@ dummy:
 #ceph_stable_repo: "{{ ceph_mirror }}/debian-{{ ceph_stable_release }}"
 
 #nfs_ganesha_stable: true # use stable repos for nfs-ganesha
-#nfs_ganesha_stable_branch: V2.7-stable
+#nfs_ganesha_stable_branch: V3.3-stable
 #nfs_ganesha_stable_deb_repo: "{{ ceph_mirror }}/nfs-ganesha/deb-{{ nfs_ganesha_stable_branch }}/{{ ceph_stable_release }}"
 
 
@@ -165,28 +158,20 @@ dummy:
 # for more info read: https://github.com/ceph/ceph-ansible/issues/305
 #ceph_stable_distro_source: "{{ ansible_distribution_release }}"
 
-# This option is needed for _both_ stable and dev version, so please always fill the right version
-# # for supported distros, see http://download.ceph.com/rpm-{{ ceph_stable_release }}/
-#ceph_stable_redhat_distro: el7
 
-
-# REPOSITORY: RHCS VERSION RED HAT STORAGE (from 4.0)
+# REPOSITORY: RHCS VERSION RED HAT STORAGE (from 5.0)
 #
 # Enabled when ceph_repository == 'rhcs'
 #
-# This version is only supported on RHEL >= 8.0
+# This version is supported on RHEL 8
 #
-#ceph_rhcs_version: "{{ ceph_stable_rh_storage_version | default(4) }}"
+#ceph_rhcs_version: "{{ ceph_stable_rh_storage_version | default(5) }}"
 #valid_ceph_repository_type:
 #  - cdn
 #  - iso
 #ceph_rhcs_iso_path: "{{ ceph_stable_rh_storage_iso_path | default('') }}"
 #ceph_rhcs_mount_path: "{{ ceph_stable_rh_storage_mount_path | default('/tmp/rh-storage-mount') }}"
 #ceph_rhcs_repository_path: "{{ ceph_stable_rh_storage_repository_path | default('/tmp/rh-storage-repo') }}" # where to copy iso's content
-
-# RHCS installation in Debian systems
-#ceph_rhcs_cdn_debian_repo: https://customername:customerpasswd@rhcs.download.redhat.com
-#ceph_rhcs_cdn_debian_repo_version: "/3-release/" # for GA, later for updates use /3-updates/
 
 
 # REPOSITORY: UBUNTU CLOUD ARCHIVE
@@ -272,6 +257,8 @@ dummy:
 
 #ceph_conf_key_directory: /etc/ceph
 
+#ceph_uid: "{{ '64045' if not containerized_deployment | bool and ansible_os_family == 'Debian' else '167' }}"
+
 # Permissions for keyring files in /etc/ceph
 #ceph_keyring_permissions: '0600'
 
@@ -311,9 +298,9 @@ dummy:
 # 'rbd_client_directory_mode: "0755"', *not*
 # 'rbd_client_directory_mode: 0755', or Ansible will complain: mode
 # must be in octal or symbolic form
-#rbd_client_directory_owner: null
-#rbd_client_directory_group: null
-#rbd_client_directory_mode: null
+#rbd_client_directory_owner: ceph
+#rbd_client_directory_group: ceph
+#rbd_client_directory_mode: "0770"
 
 #rbd_client_log_path: /var/log/ceph
 #rbd_client_log_file: "{{ rbd_client_log_path }}/qemu-guest-$pid.log" # must be writable by QEMU and allowed by SELinux or AppArmor
@@ -326,11 +313,10 @@ dummy:
 # Eg. If you want to specify for each monitor which address the monitor will bind to you can set it in your **inventory host file** by using 'monitor_address' variable.
 # Preference will go to monitor_address if both monitor_address and monitor_interface are defined.
 #monitor_interface: interface
-#monitor_address: 0.0.0.0
+#monitor_address: x.x.x.x
 #monitor_address_block: subnet
 # set to either ipv4 or ipv6, whichever your network is using
 #ip_version: ipv4
-#mon_use_fqdn: false # if set to true, the MON name used will be the fqdn in the ceph.conf
 
 #mon_host_v1:
 #  enabled: True
@@ -341,6 +327,21 @@ dummy:
 ##########
 # CEPHFS #
 ##########
+# When pg_autoscale_mode is set to True, you must add the target_size_ratio key with a correct value
+# `pg_num` and `pgp_num` keys will be ignored, even if specified.
+# eg:
+#  cephfs_data_pool:
+#    name: "{{ cephfs_data if cephfs_data is defined else 'cephfs_data' }}"
+#    pg_num: "{{ osd_pool_default_pg_num }}"
+#    pgp_num: "{{ osd_pool_default_pg_num }}"
+#    rule_name: "replicated_rule"
+#    type: 1
+#    erasure_profile: ""
+#    expected_num_objects: ""
+#    size: "{{ osd_pool_default_size }}"
+#    min_size: "{{ osd_pool_default_min_size }}"
+#    pg_autoscale_mode: False
+#    target_size_ratio: 0.2
 #cephfs: cephfs # name of the ceph filesystem
 #cephfs_data_pool:
 #  name: "{{ cephfs_data if cephfs_data is defined else 'cephfs_data' }}"
@@ -350,9 +351,9 @@ dummy:
 #  type: 1
 #  erasure_profile: ""
 #  expected_num_objects: ""
-#  application: "cephfs"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #cephfs_metadata_pool:
 #  name: "{{ cephfs_metadata if cephfs_metadata is defined else 'cephfs_metadata' }}"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -361,9 +362,9 @@ dummy:
 #  type: 1
 #  erasure_profile: ""
 #  expected_num_objects: ""
-#  application: "cephfs"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #cephfs_pools:
 #  - "{{ cephfs_data_pool }}"
 #  - "{{ cephfs_metadata_pool }}"
@@ -384,7 +385,7 @@ dummy:
 #osd_objectstore: bluestore
 
 # Any device containing these patterns in their path will be excluded.
-#osd_auto_discovery_exclude: "dm-*|loop*"
+#osd_auto_discovery_exclude: "dm-*|loop*|md*|rbd*"
 
 # xattrs. by default, 'filestore xattr use omap' is set to 'true' if
 # 'osd_mkfs_type' is set to 'ext4'; otherwise it isn't set. This can
@@ -395,7 +396,6 @@ dummy:
 
 ## MDS options
 #
-#mds_use_fqdn: false # if set to true, the MDS name used will be the fqdn in the ceph.conf
 #mds_max_mds: 1
 
 ## Rados Gateway options
@@ -412,6 +412,7 @@ dummy:
 #radosgw_frontend_port: "{{ radosgw_civetweb_port if radosgw_frontend_type == 'civetweb' else '8080' }}"
 # The server private key, public certificate and any other CA or intermediate certificates should be in one file, in PEM format.
 #radosgw_frontend_ssl_certificate: ""
+#radosgw_frontend_ssl_certificate_data: "" # certificate contents to be written to path defined by radosgw_frontend_ssl_certificate
 #radosgw_frontend_options: "{{ radosgw_civetweb_options if radosgw_frontend_type == 'civetweb' else '' }}"
 #radosgw_thread_pool_size: 512
 
@@ -421,7 +422,7 @@ dummy:
 # Eg. If you want to specify for each radosgw node which address the radosgw will bind to you can set it in your **inventory host file** by using 'radosgw_address' variable.
 # Preference will go to radosgw_address if both radosgw_address and radosgw_interface are defined.
 #radosgw_interface: interface
-#radosgw_address: 0.0.0.0
+#radosgw_address: x.x.x.x
 #radosgw_address_block: subnet
 #radosgw_keystone_ssl: false # activate this when using keystone PKI keys
 #radosgw_num_instances: 1
@@ -474,12 +475,25 @@ dummy:
 #handler_health_mgr_check_retries: 5
 #handler_health_mgr_check_delay: 10
 
+## health mon/osds check retries/delay:
+
+#health_mon_check_retries: 20
+#health_mon_check_delay: 10
+#health_osd_check_retries: 20
+#health_osd_check_delay: 10
+
+
 ###############
 # NFS-GANESHA #
 ###############
-
-# Confiure the type of NFS gatway access.  At least one must be enabled for an
-# NFS role to be useful
+#
+# Access type options
+#
+# Enable NFS File access
+# If set to true, then ganesha is set up to export the root of the
+# Ceph filesystem, and ganesha's attribute and directory caching is disabled
+# as much as possible since libcephfs clients also caches the same
+# information.
 #
 # Set this to true to enable File access via NFS.  Requires an MDS role.
 #nfs_file_gw: false
@@ -491,36 +505,38 @@ dummy:
 # MULTISITE #
 #############
 
+# Changing this value allows multisite code to run
 #rgw_multisite: false
+
+# If the desired multisite configuration involves only one realm, one zone group and one zone (per cluster), then the multisite variables can be set here.
+# Please see README-MULTISITE.md for more information.
+#
+# If multiple realms or multiple zonegroups or multiple zones need to be created on a cluster then,
+# the multisite config variables should be editted in their respective zone .yaml file and realm .yaml file.
+# See README-MULTISITE-MULTIREALM.md for more information.
 
 # The following Multi-site related variables should be set by the user.
 #
-# If there is more than 1 RGW in a master or secondary cluster than rgw_multisite_endpoints needs to be a comma seperated list (with no spaces) of the RGW endpoints in the format:
-# {{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}
-# ex: rgw_multisite_endpoints: http://foo.example.com:8080,http://bar.example.com:8080,http://baz.example.com:8080
-#
-# If there is only 1 RGW in the inventory, rgw_multisite_endpoints does not need to change
-#
 # rgw_zone is set to "default" to enable compression for clusters configured without rgw multi-site
-# If multisite is configured rgw_zone should not be set to "default". See README-MULTISITE.md for an example.
+# If multisite is configured, rgw_zone should not be set to "default".
+#
 #rgw_zone: default
 
 #rgw_zonemaster: true
 #rgw_zonesecondary: false
-#rgw_multisite_proto: "http"
-#rgw_multisite_endpoint_addr: "{{ ansible_fqdn }}"
-#rgw_multisite_endpoints_list: "{{ rgw_multisite_proto }}://{{ ansible_fqdn }}:{{ radosgw_frontend_port }}"
 #rgw_zonegroup: solarsystem # should be set by the user
+#rgw_zonegroupmaster: true
 #rgw_zone_user: zone.user
+#rgw_zone_user_display_name: "Zone User"
 #rgw_realm: milkyway # should be set by the user
+#rgw_multisite_proto: "http"
 #system_access_key: 6kWkikvapSnHyE22P7nO # should be re-created by the user
 #system_secret_key: MGecsMrWtKZgngOHZdrd6d3JxGO5CPWgT2lcnpSt # should be re-created by the user
 
 # Multi-site remote pull URL variables
-#rgw_pull_port: "{{ radosgw_civetweb_port }}"
+#rgw_pull_port: "{{ radosgw_frontend_port }}"
 #rgw_pull_proto: "http" # should be the same as rgw_multisite_proto for the master zone cluster
-#rgw_pullhost: localhost # rgw_pullhost only needs to be declared if there is a zone secondary. It should be the same as rgw_multisite_endpoint_addr for the master zone cluster
-
+#rgw_pullhost: localhost # rgw_pullhost only needs to be declared if there is a zone secondary.
 
 ###################
 # CONFIG OVERRIDE #
@@ -534,7 +550,7 @@ dummy:
 # instead of [client.radosgw.*].
 # For more examples check the profiles directory of https://github.com/ceph/ceph-ansible.
 #
-# The following sections are supported: [global], [mon], [osd], [mds], [rgw]
+# The following sections are supported: [global], [mon], [osd], [mds], [client]
 #
 # Example:
 # ceph_conf_overrides:
@@ -567,12 +583,12 @@ dummy:
 ##########
 # DOCKER #
 ##########
-#container_exec_cmd:
-#docker: false
 #ceph_docker_image: "ceph/daemon"
 #ceph_docker_image_tag: latest
 #ceph_docker_registry: docker.io
 #ceph_docker_registry_auth: false
+#ceph_docker_registry_username:
+#ceph_docker_registry_password:
 ## Client only docker image - defaults to {{ ceph_docker_image }}
 #ceph_client_docker_image: "{{ ceph_docker_image }}"
 #ceph_client_docker_image_tag: "{{ ceph_docker_image_tag }}"
@@ -599,6 +615,22 @@ dummy:
 # OPENSTACK #
 #############
 #openstack_config: false
+# When pg_autoscale_mode is set to True, you must add the target_size_ratio key with a correct value
+# `pg_num` and `pgp_num` keys will be ignored, even if specified.
+# eg:
+#  openstack_glance_pool:
+#    name: "images"
+#    pg_num: "{{ osd_pool_default_pg_num }}"
+#    pgp_num: "{{ osd_pool_default_pg_num }}"
+#    rule_name: "replicated_rule"
+#    type: 1
+#    erasure_profile: ""
+#    expected_num_objects: ""
+#    application: "rbd"
+#    size: "{{ osd_pool_default_size }}"
+#    min_size: "{{ osd_pool_default_min_size }}"
+#    pg_autoscale_mode: False
+#    target_size_ratio: 0.2
 #openstack_glance_pool:
 #  name: "images"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -610,6 +642,7 @@ dummy:
 #  application: "rbd"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #openstack_cinder_pool:
 #  name: "volumes"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -621,6 +654,7 @@ dummy:
 #  application: "rbd"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #openstack_nova_pool:
 #  name: "vms"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -632,6 +666,7 @@ dummy:
 #  application: "rbd"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #openstack_cinder_backup_pool:
 #  name: "backups"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -643,6 +678,7 @@ dummy:
 #  application: "rbd"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #openstack_gnocchi_pool:
 #  name: "metrics"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -654,6 +690,7 @@ dummy:
 #  application: "rbd"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #openstack_cephfs_data_pool:
 #  name: "manila_data"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -662,9 +699,10 @@ dummy:
 #  type: 1
 #  erasure_profile: ""
 #  expected_num_objects: ""
-#  application: "rbd"
+#  application: "cephfs"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
+#  pg_autoscale_mode: False
 #openstack_cephfs_metadata_pool:
 #  name: "manila_metadata"
 #  pg_num: "{{ osd_pool_default_pg_num }}"
@@ -673,10 +711,10 @@ dummy:
 #  type: 1
 #  erasure_profile: ""
 #  expected_num_objects: ""
-#  application: "rbd"
+#  application: "cephfs"
 #  size: "{{ osd_pool_default_size }}"
 #  min_size: "{{ osd_pool_default_min_size }}"
-
+#  pg_autoscale_mode: False
 #openstack_pools:
 #  - "{{ openstack_glance_pool }}"
 #  - "{{ openstack_cinder_pool }}"
@@ -692,7 +730,7 @@ dummy:
 # By default, keys will be auto-generated.
 #
 #openstack_keys:
-#  - { name: client.glance, caps: { mon: "profile rbd", osd: "profile rbd pool=volumes, profile rbd pool={{ openstack_glance_pool.name }}"}, mode: "0600" }
+#  - { name: client.glance, caps: { mon: "profile rbd", osd: "profile rbd pool={{ openstack_cinder_pool.name }}, profile rbd pool={{ openstack_glance_pool.name }}"}, mode: "0600" }
 #  - { name: client.cinder, caps: { mon: "profile rbd", osd: "profile rbd pool={{ openstack_cinder_pool.name }}, profile rbd pool={{ openstack_nova_pool.name }}, profile rbd pool={{ openstack_glance_pool.name }}"}, mode: "0600" }
 #  - { name: client.cinder-backup, caps: { mon: "profile rbd", osd: "profile rbd pool={{ openstack_cinder_backup_pool.name }}"}, mode: "0600" }
 #  - { name: client.gnocchi, caps: { mon: "profile rbd", osd: "profile rbd pool={{ openstack_gnocchi_pool.name }}"}, mode: "0600", }
@@ -705,24 +743,34 @@ dummy:
 #dashboard_enabled: True
 # Choose http or https
 # For https, you should set dashboard.crt/key and grafana.crt/key
+# If you define the dashboard_crt and dashboard_key variables, but leave them as '',
+# then we will autogenerate a cert and keyfile
 #dashboard_protocol: http
 #dashboard_port: 8443
 #dashboard_admin_user: admin
-#dashboard_admin_password: admin
+#dashboard_admin_user_ro: false
+# This variable must be set with a strong custom password when dashboard_enabled is True
+#dashboard_admin_password: p@ssw0rd
 # We only need this for SSL (https) connections
 #dashboard_crt: ''
 #dashboard_key: ''
+#dashboard_tls_external: false
+#dashboard_grafana_api_no_ssl_verify: False
 #dashboard_rgw_api_user_id: ceph-dashboard
 #dashboard_rgw_api_admin_resource: ''
 #dashboard_rgw_api_no_ssl_verify: False
-#node_exporter_container_image: prom/node-exporter:latest
+#dashboard_frontend_vip: ''
+#node_exporter_container_image: "docker.io/prom/node-exporter:v0.17.0"
 #node_exporter_port: 9100
 #grafana_admin_user: admin
+# This variable must be set with a strong custom password when dashboard_enabled is True
 #grafana_admin_password: admin
 # We only need this for SSL (https) connections
 #grafana_crt: ''
 #grafana_key: ''
-#grafana_container_image: "grafana/grafana:latest"
+# When using https, please fill with a hostname for which grafana_crt is valid.
+#grafana_server_fqdn: ''
+#grafana_container_image: "docker.io/grafana/grafana:5.4.3"
 #grafana_container_cpu_period: 100000
 #grafana_container_cpu_cores: 2
 # container_memory is in GB
@@ -748,7 +796,7 @@ dummy:
 #  - grafana-piechart-panel
 #grafana_allow_embedding: True
 #grafana_port: 3000
-#prometheus_container_image: prom/prometheus:latest
+#prometheus_container_image: "docker.io/prom/prometheus:v2.7.2"
 #prometheus_container_cpu_period: 100000
 #prometheus_container_cpu_cores: 2
 # container_memory is in GB
@@ -757,7 +805,7 @@ dummy:
 #prometheus_conf_dir: /etc/prometheus
 #prometheus_user_id: '65534'  # This is the UID used by the prom/prometheus container image
 #prometheus_port: 9092
-#alertmanager_container_image: prom/alertmanager:latest
+#alertmanager_container_image: "docker.io/prom/alertmanager:v0.16.2"
 #alertmanager_container_cpu_period: 100000
 #alertmanager_container_cpu_cores: 2
 # container_memory is in GB
@@ -765,6 +813,7 @@ dummy:
 #alertmanager_data_dir: /var/lib/alertmanager
 #alertmanager_conf_dir: /etc/alertmanager
 #alertmanager_port: 9093
+#alertmanager_cluster_port: 9094
 
 
 ##################################
@@ -831,5 +880,13 @@ dummy:
 # DEPRECATION #
 ###############
 
-#use_fqdn_yes_i_am_sure: false
+
+
+######################################################
+# VARIABLES BELOW SHOULD NOT BE MODIFIED BY THE USER #
+#               *DO NOT* MODIFY THEM                 #
+######################################################
+
+#container_exec_cmd:
+#docker: false
 

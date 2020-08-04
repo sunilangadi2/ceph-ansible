@@ -22,11 +22,9 @@
       mount:
         path: '{{ rootmount.mount }}'
         src: '{{ rootmount.device }}'
-        opts: noatime,nodiratime,nobarrier
+        opts: 'noatime,nodiratime{% if ansible_os_family == "RedHat" and ansible_distribution_major_version | int < 8 %},nobarrier{% endif %}'
         fstype: '{{ rootmount.fstype }}'
         state: mounted
-      when: not (ansible_os_family == 'RedHat' and
-                 ansible_distribution_major_version == '8')
 
       # we need to install this so the Socket testinfra module
       # can use netcat for testing
@@ -66,6 +64,7 @@
             state: absent
       when:
         - ansible_distribution == 'CentOS'
+        - ansible_distribution_major_version | int == 7
         - not is_atomic | bool
 
     - name: resize logical volume for root partition to fill remaining free space
@@ -75,3 +74,15 @@
         size: +100%FREE
         resizefs: yes
       when: is_atomic | bool
+
+    # https://tracker.ceph.com/issues/46759
+    - name: install pyyaml for ceph-volume
+      package:
+        name: "{{ 'python3-pyyaml' if ansible_distribution_major_version | int == 8 else 'python36-PyYAML' }}"
+      register: result
+      until: result is succeeded
+      when:
+        - not is_atomic | bool
+        - ansible_distribution == 'CentOS'
+        - inventory_hostname in groups.get('osds', [])
+        - not containerized_deployment | default(false) | bool

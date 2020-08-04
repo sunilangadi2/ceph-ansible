@@ -1,33 +1,37 @@
 ---
-- name: validate ceph_origin
-  fail:
-    msg: "ceph_origin must be either 'repository', 'distro' or 'local'"
-  when:
-    - not containerized_deployment | bool
-    - ceph_origin not in ['repository', 'distro', 'local']
+- name: include check_system.yml
+  include_tasks: check_system.yml
 
-- name: validate ceph_repository
-  fail:
-    msg: "ceph_repository must be either 'community', 'rhcs', 'dev', 'custom' or 'uca'"
-  when:
-    - ceph_origin == 'repository'
-    - ceph_repository not in ['community', 'rhcs', 'dev', 'custom', 'uca']
+- name: validate repository variables in non-containerized scenario
+  when: not containerized_deployment | bool
+  block:
+    - name: validate ceph_origin
+      fail:
+        msg: "ceph_origin must be either 'repository', 'distro' or 'local'"
+      when: ceph_origin not in ['repository', 'distro', 'local']
 
-- name: validate ceph_repository_community
-  fail:
-    msg: "ceph_stable_release must be either 'nautilus' or 'octopus'"
-  when:
-    - ceph_origin == 'repository'
-    - ceph_repository == 'community'
-    - ceph_stable_release not in ['nautilus', 'octopus']
+    - name: validate ceph_repository
+      fail:
+        msg: "ceph_repository must be either 'community', 'rhcs', 'dev', 'custom' or 'uca'"
+      when:
+        - ceph_origin == 'repository'
+        - ceph_repository not in ['community', 'rhcs', 'dev', 'custom', 'uca']
 
-- name: validate ceph_repository_type
-  fail:
-    msg: "ceph_repository_type must be either 'cdn' or 'iso'"
-  when:
-    - ceph_origin == 'repository'
-    - ceph_repository == 'rhcs'
-    - ceph_repository_type not in ['cdn', 'iso']
+    - name: validate ceph_repository_community
+      fail:
+        msg: "ceph_stable_release must be either 'nautilus' or 'octopus'"
+      when:
+        - ceph_origin == 'repository'
+        - ceph_repository == 'community'
+        - ceph_stable_release not in ['nautilus', 'octopus']
+
+    - name: validate ceph_repository_type
+      fail:
+        msg: "ceph_repository_type must be either 'cdn' or 'iso'"
+      when:
+        - ceph_origin == 'repository'
+        - ceph_repository == 'rhcs'
+        - ceph_repository_type not in ['cdn', 'iso']
 
 - name: validate osd_objectstore
   fail:
@@ -39,7 +43,7 @@
     msg: "Either monitor_address, monitor_address_block or monitor_interface must be provided"
   when:
     - mon_group_name in group_names
-    - monitor_address == '0.0.0.0'
+    - monitor_address == 'x.x.x.x'
     - monitor_address_block == 'subnet'
     - monitor_interface == 'interface'
 
@@ -48,7 +52,7 @@
     msg: "Either radosgw_address, radosgw_address_block or radosgw_interface must be provided"
   when:
     - rgw_group_name in group_names
-    - radosgw_address == '0.0.0.0'
+    - radosgw_address == 'x.x.x.x'
     - radosgw_address_block == 'subnet'
     - radosgw_interface == 'interface'
 
@@ -85,13 +89,6 @@
         - item.data is undefined
       with_items: '{{ lvm_volumes }}'
 
-- name: warning deprecation for fqdn configuration
-  fail:
-    msg: "fqdn configuration is not supported anymore. Use 'use_fqdn_yes_i_am_sure: true' if you really want to use it. See release notes for more details"
-  when:
-    - mon_use_fqdn | bool or mds_use_fqdn | bool
-    - not use_fqdn_yes_i_am_sure | bool
-
 - name: debian based systems tasks
   when: ansible_os_family == 'Debian'
   block:
@@ -99,15 +96,13 @@
       fail:
         msg: "'local' installation scenario not supported on Debian systems"
       when: ceph_origin == 'local'
-    - name: verify that ceph_rhcs_cdn_debian_repo url is valid for red hat storage
+
+    - name: fail if rhcs repository is enabled on debian
       fail:
-        msg: "ceph_rhcs_cdn_debian_repo url is invalid, please set your customername:customerpasswd"
+        msg: "RHCS isn't supported anymore on Debian distribution"
       when:
         - ceph_origin == 'repository'
         - ceph_repository == 'rhcs'
-        - ceph_repository_type == 'cdn'
-        - ceph_rhcs_cdn_debian_repo == 'https://customername:customerpasswd@rhcs.download.redhat.com'
-        - ceph_repository not in ['rhcs', 'dev', 'obs']
 
 # SUSE/openSUSE Leap only supports the following:
 # - ceph_origin == 'distro'
@@ -152,9 +147,6 @@
     - osd_objectstore == 'filestore'
     - osd_group_name in group_names
 
-- name: include check_system.yml
-  include_tasks: check_system.yml
-
 - name: include check_devices.yml
   include_tasks: check_devices.yml
   when:
@@ -167,7 +159,7 @@
   when:
     - mon_group_name in group_names
     - monitor_interface != "dummy"
-    - monitor_address == "0.0.0.0"
+    - monitor_address == "x.x.x.x"
     - monitor_address_block == "subnet"
 
 - name: include check_ipaddr_mon.yml
@@ -175,7 +167,7 @@
   when:
     - mon_group_name in group_names
     - monitor_interface == "interface"
-    - monitor_address == "0.0.0.0"
+    - monitor_address == "x.x.x.x"
     - monitor_address_block != "subnet"
 
 - name: include check_eth_rgw.yml
@@ -183,8 +175,14 @@
   when:
     - rgw_group_name in group_names
     - radosgw_interface != "dummy"
-    - radosgw_address == "0.0.0.0"
+    - radosgw_address == "x.x.x.x"
     - radosgw_address_block == "subnet"
+
+- name: include check_rgw_pools.yml
+  include_tasks: check_rgw_pools.yml
+  when:
+    - inventory_hostname in groups.get(rgw_group_name, [])
+    - rgw_create_pools is defined
 
 - name: include check_rgw_multisite.yml
   include_tasks: check_rgw_multisite.yml
@@ -207,6 +205,12 @@
   include_tasks: check_nfs.yml
   when: inventory_hostname in groups.get(nfs_group_name, [])
 
+- name: include check_rbdmirror.yml
+  include_tasks: check_rbdmirror.yml
+  when:
+    - rbdmirror_group_name in group_names
+    - ceph_rbd_mirror_configure | default(false) | bool
+
 - block:
     - name: fail if [grafana-server] group doesn't exist
       fail:
@@ -217,6 +221,13 @@
       fail:
         msg: "you must add at least one node in the [grafana-server] hosts group"
       when: groups[grafana_server_group_name] | length < 1
+
+    - name: fail when dashboard_admin_password and/or grafana_admin_password are not set
+      fail:
+        msg: "you must set dashboard_admin_password and grafana_admin_password."
+      when:
+        - dashboard_admin_password is undefined
+          or grafana_admin_password is undefined
   when: dashboard_enabled | bool
 
 - name: validate container registry credentials
@@ -226,3 +237,25 @@
     - ceph_docker_registry_auth | bool
     - (ceph_docker_registry_username is not defined or ceph_docker_registry_password is not defined) or
       (ceph_docker_registry_username | length == 0 or ceph_docker_registry_password | length == 0)
+
+- name: validate openstack_keys key format
+  fail:
+    msg: '{{ item.name }} key format invalid'
+  with_items: '{{ openstack_keys }}'
+  when:
+    - osd_group_name in group_names
+    - openstack_keys is defined
+    - openstack_keys | length > 0
+    - item.key is defined
+    - item.key is not match("^[a-zA-Z0-9+/]{38}==$")
+
+- name: validate clients keys key format
+  fail:
+    msg: '{{ item.name }} key format invalid'
+  with_items: '{{ keys }}'
+  when:
+    - client_group_name in group_names
+    - keys is defined
+    - keys | length > 0
+    - item.key is defined
+    - item.key is not match("^[a-zA-Z0-9+/]{38}==$")

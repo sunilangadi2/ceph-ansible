@@ -8,7 +8,6 @@ monitor_interface: eth1
 radosgw_interface: eth1
 journal_size: 100
 osd_objectstore: "bluestore"
-osd_scenario: lvm
 copy_admin_key: true
 # test-volume is created by tests/functional/lvm_setup.yml from /dev/sdb
 lvm_volumes:
@@ -22,5 +21,7 @@ os_tuning_params:
   - { name: fs.file-max, value: 26234859 }
 ceph_conf_overrides:
   global:
+    mon_allow_pool_size_one: true
+    mon_warn_on_pool_no_redundancy: false
     osd_pool_default_size: 1
 dashboard_enabled: False

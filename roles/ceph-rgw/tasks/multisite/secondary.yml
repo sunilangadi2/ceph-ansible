@@ -1,38 +1,43 @@
 ---
-- name: fetch the realm
-  command: "{{ container_exec_cmd }} radosgw-admin realm pull --url={{ rgw_pull_proto }}://{{ rgw_pullhost }}:{{ rgw_pull_port }} --access-key={{ system_access_key }} --secret={{ system_secret_key }}"
+- name: fetch the realm(s)
+  command: "{{ container_exec_cmd }} radosgw-admin realm pull --cluster={{ cluster }} --rgw-realm={{ item.realm }} --url={{ item.endpoint }} --access-key={{ item.system_access_key }} --secret={{ item.system_secret_key }}"
   delegate_to: "{{ groups[mon_group_name][0] }}"
   run_once: true
-  when: "'No such file or directory' in realmcheck.stderr"
+  loop: "{{ secondary_realms }}"
+  when: secondary_realms is defined
 
-- name: fetch the period
-  command: "{{ container_exec_cmd }} radosgw-admin period pull --url={{ rgw_pull_proto }}://{{ rgw_pullhost }}:{{ rgw_pull_port }} --access-key={{ system_access_key }} --secret={{ system_secret_key }}"
+- name: get the period(s)
+  command: "{{ container_exec_cmd }} radosgw-admin period get --cluster={{ cluster }} --rgw-realm={{ item.realm }}"
   delegate_to: "{{ groups[mon_group_name][0] }}"
   run_once: true
-  when: "'No such file or directory' in realmcheck.stderr"
-
-- name: set default realm
-  command: "{{ container_exec_cmd }} radosgw-admin realm default --rgw-realm={{ rgw_realm }}"
-  changed_when: false
-  delegate_to: "{{ groups[mon_group_name][0] }}"
-  run_once: true
-
-- name: set default zonegroup
-  command: "{{ container_exec_cmd }} radosgw-admin zonegroup default --rgw-zonegroup={{ rgw_zonegroup }}"
-  changed_when: false
-  delegate_to: "{{ groups[mon_group_name][0] }}"
-  run_once: true
+  loop: "{{ secondary_realms }}"
+  when: secondary_realms is defined
 
 - name: create the zone
-  command: "{{ container_exec_cmd }} radosgw-admin zone create --rgw-zonegroup={{ rgw_zonegroup }} --rgw-zone={{ rgw_zone }} --endpoints={{ rgw_multisite_proto }}://{{ rgw_multisite_endpoint_addr }}:{{ radosgw_frontend_port }} --access-key={{ system_access_key }} --secret={{ system_secret_key }} --default"
+  command: "{{ container_exec_cmd }} radosgw-admin zone create --cluster={{ cluster }} --rgw-realm={{ item.item.realm }} --rgw-zonegroup={{ item.item.zonegroup }} --rgw-zone={{ item.item.zone }} --access-key={{ item.item.system_access_key }} --secret={{ item.item.system_secret_key }} {{ '--default' if zones | length == 1 else '' }}"
   delegate_to: "{{ groups[mon_group_name][0] }}"
   run_once: true
-  when: "'No such file or directory' in zonecheck.stderr"
-  notify: update period
+  loop: "{{ zonecheck.results }}"
+  when:
+    - zones is defined
+    - zones | length > 0
+    - not item.item.is_master | bool
+    - "'No such file or directory' in item.stderr"
 
-- name: add other endpoints to the zone
-  command: "{{ container_exec_cmd }} radosgw-admin zone modify --rgw-zone={{ rgw_zone }} --endpoints {{ rgw_multisite_endpoints_list }}"
+- name: add endpoints to their zone(s)
+  command: "{{ container_exec_cmd }} radosgw-admin zone modify --cluster={{ cluster }} --rgw-realm={{ item.realm }} --rgw-zonegroup={{ item.zonegroup }} --rgw-zone={{ item.zone }} --endpoints {{ item.endpoints }}"
+  loop: "{{ zone_endpoints_list }}"
   delegate_to: "{{ groups[mon_group_name][0] }}"
   run_once: true
-  when: rgw_multisite_endpoints_list is defined
-  notify: update period
+  when:
+    - zone_endpoints_list is defined
+    - not item.is_master | bool
+
+- name: update period for zone creation
+  command: "{{ container_exec_cmd }} radosgw-admin --cluster={{ cluster }} --rgw-realm={{ item.realm }} --rgw-zonegroup={{ item.zonegroup }} --rgw-zone={{ item.zone }} period update --commit"
+  delegate_to: "{{ groups[mon_group_name][0] }}"
+  run_once: true
+  loop: "{{ zone_endpoints_list }}"
+  when:
+    - zone_endpoints_list is defined
+    - not item.is_master | bool

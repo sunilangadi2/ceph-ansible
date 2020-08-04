@@ -21,6 +21,12 @@
     - import_role:
         name: ceph-container-engine
     - import_role:
+        name: ceph-container-common
+        tasks_from: registry
+      when:
+        - not containerized_deployment | bool
+        - ceph_docker_registry_auth | bool
+    - import_role:
         name: ceph-node-exporter
 
   post_tasks:
@@ -50,6 +56,10 @@
       tags: ['ceph_update_config']
     - import_role:
         name: ceph-facts
+      tags: ['ceph_update_config']
+    - import_role:
+        name: ceph-facts
+        tasks_from: grafana
       tags: ['ceph_update_config']
     - import_role:
         name: ceph-prometheus
@@ -85,6 +95,10 @@
       tags: ['ceph_update_config']
     - import_role:
         name: ceph-facts
+      tags: ['ceph_update_config']
+    - import_role:
+        name: ceph-facts
+        tasks_from: grafana
       tags: ['ceph_update_config']
     - import_role:
         name: ceph-dashboard

@@ -4,13 +4,7 @@
 require 'yaml'
 VAGRANTFILE_API_VERSION = '2'
 
-if File.file?('vagrant_variables.yml') then
-  vagrant_variable_filename='vagrant_variables.yml'
-else
-  vagrant_variable_filename='vagrant_variables.yml.sample'
-end
-
-config_file=File.expand_path(File.join(File.dirname(__FILE__), vagrant_variable_filename))
+config_file=File.expand_path(File.join(File.dirname(__FILE__), 'vagrant_variables.yml'))
 
 settings=YAML.load_file(config_file)
 
@@ -45,7 +39,7 @@ $last_ip_cluster_digit = 9
 
 ansible_provision = proc do |ansible|
   if DOCKER then
-    ansible.playbook = 'site-docker.yml'
+    ansible.playbook = 'site-container.yml'
     if settings['skip_tags']
       ansible.skip_tags = settings['skip_tags']
     end

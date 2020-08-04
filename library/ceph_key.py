@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # Copyright 2018, Red Hat, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,12 +57,10 @@ options:
             If 'absent' is used, the module will simply delete the keyring.
             If 'list' is used, the module will list all the keys and will
             return a json output.
-            If 'update' is used, the module will **only** update
-            the capabilities of a given keyring.
             If 'info' is used, the module will return in a json format the
             description of a given keyring.
         required: true
-        choices: ['present', 'absent', 'list', 'update', 'info']
+        choices: ['present', 'absent', 'list', 'info']
         default: list
     caps:
         description:
@@ -141,12 +139,6 @@ caps:
     state: present
     caps: "{{ caps }}"
     import_key: False
-
-- name: update cephx key
-  ceph_key:
-    name: "my_key"
-    state: update
-    caps: "{{ caps }}"
 
 - name: delete cephx key
   ceph_key:
@@ -351,28 +343,6 @@ def create_key(module, result, cluster, name, secret, caps, import_key, dest, co
     return cmd_list
 
 
-def update_key(cluster, name, caps, container_image=None):
-    '''
-    Update a CephX key's capabilities
-    '''
-
-    cmd_list = []
-
-    args = [
-        'caps',
-        name,
-    ]
-
-    args = generate_caps(args, "ceph", caps)
-    user = "client.admin"
-    keyring_filename = cluster + "." + user + ".keyring"
-    user_key = os.path.join("/etc/ceph/", keyring_filename)
-    cmd_list.append(generate_ceph_cmd(
-        cluster, args, user, user_key, container_image))
-
-    return cmd_list
-
-
 def delete_key(cluster, name, container_image=None):
     '''
     Delete a CephX key
@@ -541,6 +511,8 @@ def run_module():
         add_file_common_args=True,
     )
 
+    file_args = module.load_file_common_arguments(module.params)
+
     # Gather module parameters in variables
     state = module.params['state']
     name = module.params.get('name')
@@ -550,8 +522,10 @@ def run_module():
     import_key = module.params.get('import_key')
     dest = module.params.get('dest')
 
+    changed = False
+
     result = dict(
-        changed=False,
+        changed=changed,
         stdout='',
         stderr='',
         rc='',
@@ -571,80 +545,101 @@ def run_module():
     # Test if the key exists, if it does we skip its creation
     # We only want to run this check when a key needs to be added
     # There is no guarantee that any cluster is running and we don't need one
-    if import_key:
-        user = "client.admin"
-        keyring_filename = cluster + '.' + user + '.keyring'
-        user_key = os.path.join("/etc/ceph/", keyring_filename)
-        output_format = "json"
-        rc, cmd, out, err = exec_commands(
-            module, info_key(cluster, name, user, user_key, output_format, container_image))  # noqa E501
+    _secret = secret
+    _caps = caps
 
-    if state == "present":
-        if not caps:
-            fatal("Capabilities must be provided when state is 'present'", module)  # noqa E501
+    user = "client.admin"
+    user_key = os.path.join(
+        "/etc/ceph/" + cluster + ".client.admin.keyring")
+    output_format = "json"
+    _info_key = []
+    rc, cmd, out, err = exec_commands(
+        module, info_key(cluster, name, user, user_key, output_format, container_image))  # noqa E501
+    key_exist = rc
 
+    if (state in ["present", "update"]):
         # if dest is not a directory, the user wants to change the file's name
         # (e,g: /etc/ceph/ceph.mgr.ceph-mon2.keyring)
         if not os.path.isdir(dest):
             file_path = dest
-        elif 'bootstrap' in dest:
-            # Build a different path for bootstrap keys as there are stored as
-            # /var/lib/ceph/bootstrap-rbd/ceph.keyring
-            keyring_filename = cluster + '.keyring'
-            file_path = os.path.join(dest, keyring_filename)
         else:
-            keyring_filename = cluster + "." + name + ".keyring"
+            if 'bootstrap' in dest:
+                # Build a different path for bootstrap keys as there are stored as
+                # /var/lib/ceph/bootstrap-rbd/ceph.keyring
+                keyring_filename = cluster + '.keyring'
+            else:
+                keyring_filename = cluster + "." + name + ".keyring"
             file_path = os.path.join(dest, keyring_filename)
 
-        # We allow 'present' to override any existing key
-        # ONLY if a secret is provided
-        # if not we skip the creation
+        file_args['path'] = file_path
+
         if import_key:
-            if rc == 0 and not secret:
-                # If the key exists in Ceph we must fetch it on the system
-                # because nothing tells us it exists on the fs or not
-                rc, cmd, out, err = exec_commands(module, get_key(cluster, name, file_path, container_image))  # noqa E501
-                result["stdout"] = "skipped, since {0} already exists, we only fetched the key at {1}. If you want to update a key use 'state: update'".format(  # noqa E501
-                    name, file_path)
-                result['rc'] = rc
+            if key_exist == 0:
+                _info_key = json.loads(out)
+                if not secret:
+                    secret = _info_key[0]['key']
+                _secret = _info_key[0]['key']
+                if not caps:
+                    caps = _info_key[0]['caps']
+                _caps = _info_key[0]['caps']
+                if secret == _secret and caps == _caps:
+                    if not os.path.isfile(file_path):
+                        rc, cmd, out, err = exec_commands(module, get_key(cluster, name, file_path, container_image))  # noqa E501
+                        result["rc"] = rc
+                        if rc != 0:
+                            result["stdout"] = "Couldn't fetch the key {0} at {1}.".format(name, file_path) # noqa E501
+                            module.exit_json(**result)
+                        result["stdout"] = "fetched the key {0} at {1}.".format(name, file_path) # noqa E501
+
+                    result["stdout"] = "{0} already exists and doesn't need to be updated.".format(name) # noqa E501
+                    result["rc"] = 0
+                    module.set_fs_attributes_if_different(file_args, False)
+                    module.exit_json(**result)
+        else:
+            if os.path.isfile(file_path) and not secret or not caps:
+                result["stdout"] = "{0} already exists in {1} you must provide secret *and* caps when import_key is {2}".format(name, dest, import_key) # noqa E501
+                result["rc"] = 0
                 module.exit_json(**result)
 
-        rc, cmd, out, err = exec_commands(module, create_key(
-            module, result, cluster, name, secret, caps, import_key, file_path, container_image))  # noqa E501
+    # "update" is here only for backward compatibility
+    if state in ["present", "update"]:
+        if not caps and import_key and rc != 0:
+            fatal("Capabilities must be provided when state is 'present'", module)  # noqa E501
+        if import_key and key_exist != 0 and secret is None and caps is None:
+            fatal("Keyring doesn't exist, you must provide 'secret' and 'caps'", module)  # noqa E501
 
-        file_args = module.load_file_common_arguments(module.params)
-        file_args['path'] = file_path
+        # There's no need to run create_key() if neither secret nor caps have changed
+        if (key_exist == 0 and (secret != _secret or caps != _caps)) or key_exist != 0:
+            rc, cmd, out, err = exec_commands(module, create_key(
+                module, result, cluster, name, secret, caps, import_key, file_path, container_image))  # noqa E501
+            if rc != 0:
+                result["stdout"] = "Couldn't create or update {0}".format(name)
+                result["stderr"] = err
+                module.exit_json(**result)
+            changed = True
+
         module.set_fs_attributes_if_different(file_args, False)
-    elif state == "update":
-        if not caps:
-            fatal("Capabilities must be provided when state is 'update'", module)  # noqa E501
-
-        if rc != 0:
-            result["stdout"] = "skipped, since {0} does not exist".format(name)
-            result['rc'] = 0
-            module.exit_json(**result)
-
-        rc, cmd, out, err = exec_commands(
-            module, update_key(cluster, name, caps, container_image))
-        # After the update we don't need to overwrite the key on the filesystem
-        # since the secret has not changed
 
     elif state == "absent":
-        rc, cmd, out, err = exec_commands(
-            module, delete_key(cluster, name, container_image))
+        if key_exist == 0:
+            rc, cmd, out, err = exec_commands(
+                module, delete_key(cluster, name, container_image))
+            if rc == 0:
+                changed = True
+        else:
+            rc = 0
 
     elif state == "info":
-        if rc != 0:
-            result["stdout"] = "skipped, since {0} does not exist".format(name)
-            result['rc'] = 0
-            module.exit_json(**result)
-
         user = "client.admin"
         keyring_filename = cluster + '.' + user + '.keyring'
         user_key = os.path.join("/etc/ceph/", keyring_filename)
         output_format = "json"
         rc, cmd, out, err = exec_commands(
             module, info_key(cluster, name, user, user_key, output_format, container_image))  # noqa E501
+        if rc != 0:
+            result["stdout"] = "skipped, since {0} does not exist".format(name)
+            result['rc'] = 0
+            module.exit_json(**result)
 
     elif state == "list":
         user = "client.admin"
@@ -695,7 +690,7 @@ def run_module():
             module.set_fs_attributes_if_different(file_args, False)
     else:
         module.fail_json(
-            msg='State must either be "present" or "absent" or "update" or "list" or "info" or "fetch_initial_keys".', changed=False, rc=1)  # noqa E501
+            msg='State must either be "present" or "absent" or "list" or "info" or "fetch_initial_keys".', changed=False, rc=1)  # noqa E501
 
     endd = datetime.datetime.now()
     delta = endd - startd
@@ -708,7 +703,7 @@ def run_module():
         rc=rc,
         stdout=out.rstrip("\r\n"),
         stderr=err.rstrip("\r\n"),
-        changed=True,
+        changed=changed,
     )
 
     if rc != 0:

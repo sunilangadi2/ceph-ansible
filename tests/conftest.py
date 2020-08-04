@@ -17,7 +17,6 @@ def str_to_bool(val):
 @pytest.fixture(scope="module")
 def setup(host):
     cluster_address = ""
-    container_binary = ""
     osd_ids = []
     osds = []
 
@@ -25,6 +24,7 @@ def setup(host):
     ansible_facts = host.ansible("setup")
 
     docker = ansible_vars.get("docker")
+    container_binary = ansible_vars.get("container_binary", "")
     osd_auto_discovery = ansible_vars.get("osd_auto_discovery")
     group_names = ansible_vars["group_names"]
     fsid = ansible_vars.get("fsid")
@@ -39,7 +39,7 @@ def setup(host):
         cluster_interface = "ens7"
 
     subnet = ".".join(ansible_vars["public_network"].split(".")[0:-1])
-    num_mons = len(ansible_vars["groups"]["mons"])
+    num_mons = len(ansible_vars["groups"].get('mons', []))
     if osd_auto_discovery:
         num_osds = 3
     else:
@@ -60,18 +60,10 @@ def setup(host):
         if cmd.rc == 0:
             osd_ids = cmd.stdout.rstrip("\n").split("\n")
             osds = osd_ids
-            if docker and fsid == "6e008d48-1661-11e8-8546-008c3214218a":
-                osds = []
-                for device in ansible_vars.get("devices", []):
-                    real_dev = host.run("sudo readlink -f %s" % device)
-                    real_dev_split = real_dev.stdout.split("/")[-1]
-                    osds.append(real_dev_split)
 
     address = host.interface(public_interface).addresses[0]
 
-    if docker:
-        container_binary = "docker"
-    if docker and str_to_bool(os.environ.get('IS_PODMAN', False)):  # noqa E501
+    if docker and not container_binary:
         container_binary = "podman"
 
     data = dict(
@@ -109,6 +101,7 @@ def node(host, request):
     rolling_update = os.environ.get("ROLLING_UPDATE", "False")
     group_names = ansible_vars["group_names"]
     docker = ansible_vars.get("docker")
+    dashboard = ansible_vars.get("dashboard_enabled", True)
     radosgw_num_instances = ansible_vars.get("radosgw_num_instances", 1)
     ceph_release_num = {
         'jewel': 10,
@@ -117,6 +110,7 @@ def node(host, request):
         'mimic': 13,
         'nautilus': 14,
         'octopus': 15,
+        'pacific': 16,
         'dev': 99
     }
 
@@ -133,6 +127,9 @@ def node(host, request):
             request.function, group_names)
         pytest.skip(reason)
 
+    if request.node.get_closest_marker('ceph_crash') and group_names in [['nfss'], ['iscsigws'], ['clients'], ['grafana-server']]:
+        pytest.skip('Not a valid test for nfs, client or iscsigw nodes')
+
     if request.node.get_closest_marker("no_docker") and docker:
         pytest.skip(
             "Not a valid test for containerized deployments or atomic hosts")
@@ -141,6 +138,9 @@ def node(host, request):
         pytest.skip(
             "Not a valid test for non-containerized deployments or atomic hosts")  # noqa E501
 
+    if request.node.get_closest_marker("dashboard") and not dashboard:
+        pytest.skip(
+            "Not a valid test with dashboard disabled")
 
     data = dict(
         vars=ansible_vars,
@@ -172,6 +172,8 @@ def pytest_collection_modifyitems(session, config, items):
             item.add_marker(pytest.mark.nfss)
         elif "iscsi" in test_path:
             item.add_marker(pytest.mark.iscsigws)
+        elif "grafana" in test_path:
+            item.add_marker(pytest.mark.grafanas)
         else:
             item.add_marker(pytest.mark.all)
 

@@ -61,6 +61,10 @@
     - block:
         - name: get nfs nodes ansible facts
           setup:
+            gather_subset:
+              - 'all'
+              - '!facter'
+              - '!ohai'
           delegate_to: "{{ item }}"
           delegate_facts: True
           with_items: "{{ groups[nfs_group_name] }}"
@@ -129,42 +133,36 @@
     - grafana-server
     - clients
     - iscsigws
-    - iscsi-gws # for backward compatibility only!
 
   become: true
 
   tasks:
-    - name: set ceph_docker_registry value if not set
-      set_fact:
-        ceph_docker_registry: "docker.io"
-      when: ceph_docker_registry is not defined
+    - import_role:
+        name: ceph-defaults
 
-    - name: disable node_exporter service
-      service:
-        name: node_exporter
-        state: stopped
-        enabled: no
-      failed_when: false
+    - block:
+        - import_role:
+            name: ceph-facts
+            tasks_from: container_binary
 
-    - name: remove node-exporter container
-      docker_container:
-        name: node_exporter
-        state: absent
-      failed_when: false
+        - name: disable node_exporter service
+          service:
+            name: node_exporter
+            state: stopped
+            enabled: no
+          failed_when: false
 
-    - name: remove node_exporter service file
-      file:
-        name: /etc/systemd/system/node_exporter.service
-        state: absent
+        - name: remove node_exporter service file
+          file:
+            name: /etc/systemd/system/node_exporter.service
+            state: absent
 
-    - name: remove node-exporter image
-      docker_image:
-        image: "{{ ceph_docker_registry }}/prom/node-exporter"
-        state: absent
-        force: yes
-      tags:
-        - remove_img
-      failed_when: false
+        - name: remove node-exporter image
+          command: "{{ container_binary }} rmi {{ node_exporter_container_image }}"
+          failed_when: false
+          tags:
+            - remove_img
+      when: dashboard_enabled | bool
 
 
 - name: purge ceph grafana-server
@@ -177,58 +175,54 @@
       - alertmanager
 
   tasks:
-    - name: set ceph_docker_registry value if not set
-      set_fact:
-        ceph_docker_registry: "docker.io"
-      when: ceph_docker_registry is not defined
+    - import_role:
+        name: ceph-defaults
 
-    - name: stop services
-      service:
-        name: "{{ item }}"
-        state: stopped
-        enabled: no
-      with_items: "{{ grafana_services }}"
-      failed_when: false
+    - block:
+        - import_role:
+            name: ceph-facts
+            tasks_from: container_binary
 
-    - name: remove containers
-      docker_container:
-        name: "{{ item }}"
-        state: absent
-      with_items: "{{ grafana_services }}"
-      failed_when: false
+        - name: stop services
+          service:
+            name: "{{ item }}"
+            state: stopped
+            enabled: no
+          with_items: "{{ grafana_services }}"
+          failed_when: false
 
-    - name: remove service files
-      file:
-        name: "/etc/systemd/system/{{ item }}.service"
-        state: absent
-      with_items: "{{ grafana_services }}"
-      failed_when: false
+        - name: remove service files
+          file:
+            name: "/etc/systemd/system/{{ item }}.service"
+            state: absent
+          with_items: "{{ grafana_services }}"
+          failed_when: false
 
-    - name: remove images
-      docker_image:
-        name: "{{ item }}"
-        state: absent
-        force: yes
-      with_items:
-        - "{{ ceph_docker_registry }}/prom/prometheus"
-        - "{{ ceph_docker_registry }}/grafana/grafana"
-        - "{{ ceph_docker_registry }}/prom/alertmanager"
-      failed_when: false
+        - name: remove ceph dashboard container images
+          command: "{{ container_binary }} rmi {{ item }}"
+          with_items:
+            - "{{ prometheus_container_image }}"
+            - "{{ grafana_container_image }}"
+            - "{{ alertmanager_container_image }}"
+          failed_when: false
+          tags:
+            - remove_img
 
-    - name: remove data
-      file:
-        name: "{{ item }}"
-        state: absent
-      with_items:
-        - /etc/grafana/dashboards
-        - /etc/grafana/grafana.ini
-        - /etc/grafana/provisioning
-        - /var/lib/grafana
-        - /etc/alertmanager
-        - /var/lib/alertmanager
-        - /var/lib/prometheus
-        - /etc/prometheus
-      failed_when: false
+        - name: remove data
+          file:
+            name: "{{ item }}"
+            state: absent
+          with_items:
+            - /etc/grafana/dashboards
+            - /etc/grafana/grafana.ini
+            - /etc/grafana/provisioning
+            - /var/lib/grafana
+            - /etc/alertmanager
+            - /var/lib/alertmanager
+            - /var/lib/prometheus
+            - /etc/prometheus
+          failed_when: false
+      when: dashboard_enabled | bool
 
 
 - name: purge ceph mds cluster
@@ -306,13 +300,20 @@
   become: true
 
   tasks:
+    - import_role:
+        name: ceph-defaults
 
-  - name: stop ceph rgws with systemd
-    service:
-      name: ceph-radosgw@rgw.*
-      state: stopped
-      enabled: no
-    failed_when: false
+    - import_role:
+        name: ceph-facts
+        tasks_from: set_radosgw_address
+
+    - name: stop ceph rgws with systemd
+      service:
+        name: "ceph-radosgw@rgw.{{ ansible_hostname }}.{{ item.instance_name }}"
+        state: stopped
+        enabled: no
+      failed_when: false
+      with_items: "{{ rgw_instances }}"
 
 
 - name: purge ceph rbd-mirror cluster
@@ -609,6 +610,29 @@
       - /var/lib/ceph/bootstrap-mgr
       - /var/lib/ceph/tmp
 
+- name: purge ceph-crash daemons
+  hosts:
+    - "{{ mon_group_name | default('mons') }}"
+    - "{{ osd_group_name | default('osds') }}"
+    - "{{ mds_group_name | default('mdss') }}"
+    - "{{ rgw_group_name | default('rgws') }}"
+    - "{{ rbdmirror_group_name | default('rbdmirrors') }}"
+    - "{{ mgr_group_name | default('mgrs') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: stop ceph-crash service
+      service:
+        name: ceph-crash.service
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: remove /var/lib/ceph/crash
+      file:
+        path: /var/lib/ceph/crash
+        state: absent
+
 
 - name: final cleanup - check any running ceph, purge ceph packages, purge config and remove data
 
@@ -619,26 +643,29 @@
 
     ceph_packages:
       - ceph
+      - ceph-base
       - ceph-common
-      - ceph-fs-common
       - ceph-fuse
       - ceph-mds
       - ceph-mgr
+      - ceph-mon
+      - ceph-osd
       - ceph-release
       - ceph-radosgw
-      - calamari-server
       - ceph-grafana-dashboards
+      - rbd-mirror
 
     ceph_remaining_packages:
-      - libcephfs1
       - libcephfs2
       - librados2
       - libradosstriper1
       - librbd1
-      - python-ceph-argparse
-      - python-cephfs
-      - python-rados
-      - python-rbd
+      - librgw2
+      - python3-ceph-argparse
+      - python3-cephfs
+      - python3-rados
+      - python3-rbd
+      - python3-rgw
 
     extra_packages:
       - keepalived

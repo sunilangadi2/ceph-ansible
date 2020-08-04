@@ -8,18 +8,8 @@
   set_fact:
     is_atomic: "{{ stat_ostree.stat.exists }}"
 
-- name: check if podman binary is present
-  stat:
-    path: /usr/bin/podman
-  register: podman_binary
-
-- name: set_fact is_podman
-  set_fact:
-    is_podman: "{{ podman_binary.stat.exists }}"
-
-- name: set_fact container_binary
-  set_fact:
-    container_binary: "{{ 'podman' if (podman_binary.stat.exists and ansible_distribution == 'Fedora') or (ansible_os_family == 'RedHat' and ansible_distribution_major_version == '8') else 'docker' }}"
+- name: import_tasks container_binary.yml
+  import_tasks: container_binary.yml
 
 # In case ansible_python_interpreter is set by the user,
 # ansible will not discover python and discovered_interpreter_python
@@ -36,35 +26,94 @@
 
 - name: set_fact monitor_name ansible_hostname
   set_fact:
-    monitor_name: "{{ ansible_hostname }}"
-  when: not mon_use_fqdn | bool
-
-- name: set_fact monitor_name ansible_fqdn
-  set_fact:
-    monitor_name: "{{ ansible_fqdn }}"
-  when: mon_use_fqdn | bool
-
-- name: set_fact container_exec_cmd
-  set_fact:
-    container_exec_cmd: "{{ container_binary }} exec ceph-mon-{{ hostvars[groups[mon_group_name][0]]['ansible_hostname'] if not rolling_update else hostvars[mon_host | default(groups[mon_group_name][0])]['ansible_hostname'] }}"
-  when:
-    - containerized_deployment | bool
-    - groups.get(mon_group_name, []) | length > 0
-
-# this task shouldn't run in a rolling_update situation
-# because it blindly picks a mon, which may be down because
-# of the rolling update
-- name: is ceph running already?
-  command: "{{ timeout_command }} {{ container_exec_cmd }} ceph --cluster {{ cluster }} -s -f json"
-  changed_when: false
-  failed_when: false
-  check_mode: no
-  register: ceph_current_status
+    monitor_name: "{{ hostvars[item]['ansible_hostname'] }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  with_items: "{{ groups.get(mon_group_name, []) }}"
   run_once: true
-  delegate_to: "{{ groups[mon_group_name][0] }}"
-  when:
-    - not rolling_update | bool
-    - groups.get(mon_group_name, []) | length > 0
+  when: groups.get(mon_group_name, []) | length > 0
+
+- name: find a running monitor
+  when: groups.get(mon_group_name, []) | length > 0
+  block:
+    - name: set_fact container_exec_cmd
+      set_fact:
+        container_exec_cmd: "{{ container_binary }} exec ceph-mon-{{ hostvars[groups[mon_group_name][0]]['ansible_hostname'] if not rolling_update else hostvars[mon_host | default(groups[mon_group_name][0])]['ansible_hostname'] }}"
+      when:
+        - containerized_deployment | bool
+
+    - name: find a running mon container
+      command: "{{ container_binary }} ps -q --filter name=ceph-mon-{{ hostvars[item]['ansible_hostname'] }}"
+      register: find_running_mon_container
+      failed_when: false
+      run_once: true
+      delegate_to: "{{ item }}"
+      with_items: "{{ groups.get(mon_group_name, []) }}"
+      when:
+        - containerized_deployment | bool
+
+    - name: check for a ceph mon socket
+      shell: stat --printf=%n {{ rbd_client_admin_socket_path }}/{{ cluster }}-mon*.asok
+      changed_when: false
+      failed_when: false
+      check_mode: no
+      register: mon_socket_stat
+      run_once: true
+      delegate_to: "{{ item }}"
+      with_items: "{{ groups.get(mon_group_name, []) }}"
+      when:
+        - not containerized_deployment | bool
+
+    - name: check if the ceph mon socket is in-use
+      command: grep -q {{ item.stdout }} /proc/net/unix
+      changed_when: false
+      failed_when: false
+      check_mode: no
+      register: mon_socket
+      run_once: true
+      with_items: "{{ mon_socket_stat.results }}"
+      when:
+        - not containerized_deployment | bool
+        - item.rc == 0
+
+    - name: set_fact running_mon - non_container
+      set_fact:
+        running_mon: "{{ hostvars[item.item.item]['inventory_hostname'] }}"
+      with_items: "{{ mon_socket.results }}"
+      run_once: true
+      when:
+        - not containerized_deployment | bool
+        - item.rc is defined
+        - item.rc == 0
+
+    - name: set_fact running_mon - container
+      set_fact:
+        running_mon: "{{ item.item }}"
+      run_once: true
+      with_items: "{{ find_running_mon_container.results }}"
+      when:
+        - containerized_deployment | bool
+        - item.stdout_lines | default([]) | length > 0
+
+    - name: set_fact _container_exec_cmd
+      set_fact:
+        _container_exec_cmd: "{{ container_binary }} exec ceph-mon-{{ hostvars[groups[mon_group_name][0] if running_mon is undefined else running_mon]['ansible_hostname'] }}"
+      when:
+        - containerized_deployment | bool
+
+    # this task shouldn't run in a rolling_update situation
+    # because it blindly picks a mon, which may be down because
+    # of the rolling update
+    - name: is ceph running already?
+      command: "{{ timeout_command }} {{ _container_exec_cmd | default('') }} ceph --cluster {{ cluster }} -s -f json"
+      changed_when: false
+      failed_when: false
+      check_mode: no
+      register: ceph_current_status
+      run_once: true
+      delegate_to: "{{ groups[mon_group_name][0] if running_mon is undefined else running_mon }}"
+      when:
+        - not rolling_update | bool
 
 # set this as a default when performing a rolling_update
 # so the rest of the tasks here will succeed
@@ -114,7 +163,7 @@
     - not rolling_update | bool
   block:
   - name: generate cluster fsid
-    command: "{{ discovered_interpreter_python }} -c 'import uuid; print(str(uuid.uuid4()))'"
+    command: "{{ hostvars[groups[mon_group_name][0]]['discovered_interpreter_python'] }} -c 'import uuid; print(str(uuid.uuid4()))'"
     register: cluster_uuid
     delegate_to: "{{ groups[mon_group_name][0] }}"
     run_once: true
@@ -122,34 +171,6 @@
   - name: set_fact fsid
     set_fact:
       fsid: "{{ cluster_uuid.stdout }}"
-
-- name: set_fact mds_name ansible_hostname
-  set_fact:
-    mds_name: "{{ ansible_hostname }}"
-  when: not mds_use_fqdn | bool
-
-- name: set_fact mds_name ansible_fqdn
-  set_fact:
-    mds_name: "{{ ansible_fqdn }}"
-  when: mds_use_fqdn | bool
-
-- name: set_fact rbd_client_directory_owner ceph
-  set_fact:
-    rbd_client_directory_owner: ceph
-  when: rbd_client_directory_owner is not defined
-      or not rbd_client_directory_owner
-
-- name: set_fact rbd_client_directory_group rbd_client_directory_group
-  set_fact:
-    rbd_client_directory_group: ceph
-  when: rbd_client_directory_group is not defined
-      or not rbd_client_directory_group
-
-- name: set_fact rbd_client_directory_mode 0770
-  set_fact:
-    rbd_client_directory_mode: "0770"
-  when: rbd_client_directory_mode is not defined
-      or not rbd_client_directory_mode
 
 - name: resolve device link(s)
   command: readlink -f {{ item }}
@@ -181,48 +202,17 @@
 
 - name: set_fact devices generate device list when osd_auto_discovery
   set_fact:
-    devices: "{{ devices | default([]) + [ item.key | regex_replace('^', '/dev/') ] }}"
+    devices: "{{ (devices | default([]) + [ item.key | regex_replace('^', '/dev/') ]) | unique }}"
   with_dict: "{{ ansible_devices }}"
   when:
     - osd_auto_discovery | default(False) | bool
+    - inventory_hostname in groups.get(osd_group_name, [])
     - ansible_devices is defined
     - item.value.removable == "0"
     - item.value.sectors != "0"
     - item.value.partitions|count == 0
     - item.value.holders|count == 0
     - item.key is not match osd_auto_discovery_exclude
-
-- name: set_fact ceph_uid for debian based system - non container
-  set_fact:
-    ceph_uid: 64045
-  when:
-    - not containerized_deployment | bool
-    - ansible_os_family == 'Debian'
-
-- name: set_fact ceph_uid for red hat or suse based system - non container
-  set_fact:
-    ceph_uid: 167
-  when:
-    - not containerized_deployment | bool
-    - ansible_os_family in ['RedHat', 'Suse']
-
-- name: set_fact ceph_uid for debian based system - container
-  set_fact:
-    ceph_uid: 64045
-  when:
-    - containerized_deployment | bool
-    - ceph_docker_image_tag | string is search("ubuntu")
-
-- name: set_fact ceph_uid for red hat based system - container
-  set_fact:
-    ceph_uid: 167
-  when:
-    - containerized_deployment | bool
-    - (ceph_docker_image_tag | string is search("latest")
-      or ceph_docker_image_tag | string is search("centos")
-      or ceph_docker_image_tag | string is search("fedora")
-      or ceph_docker_image_tag | string is search("rhceph")
-      or (ansible_distribution == 'RedHat'))
 
 - name: set_fact rgw_hostname
   set_fact:
@@ -266,8 +256,7 @@
 
 - name: set_fact osd_pool_default_crush_rule
   set_fact:
-    osd_pool_default_crush_rule: "{% if crush_rule_variable.rc == 0 %}{{ crush_rule_variable.stdout.split(' = ')[1] }}{% else %}{{ ceph_osd_pool_default_crush_rule }}{% endif %}"
-  when: ceph_conf.stat.exists
+    osd_pool_default_crush_rule: "{{ crush_rule_variable.stdout.split(' = ')[1] if crush_rule_variable.get('rc', 1) | int == 0 else ceph_osd_pool_default_crush_rule }}"
 
 - name: import_tasks set_monitor_address.yml
   import_tasks: set_monitor_address.yml
@@ -277,72 +266,29 @@
   import_tasks: set_radosgw_address.yml
   when: inventory_hostname in groups.get(rgw_group_name, [])
 
-- name: set_fact rgw_instances
-  set_fact:
-    rgw_instances: "{{ rgw_instances|default([]) | union([{'instance_name': 'rgw' + item|string, 'radosgw_address': _radosgw_address, 'radosgw_frontend_port': radosgw_frontend_port|int + item|int}]) }}"
-  with_sequence: start=0 end={{ radosgw_num_instances|int - 1 }}
-  when: inventory_hostname in groups.get(rgw_group_name, [])
-
-- name: set ntp service name depending on OS family
-  block:
-  - name: set ntp service name for Debian family
-    set_fact:
-      ntp_service_name: ntp
-    when: ansible_os_family == 'Debian'
-
-  - name: set ntp service name for Red Hat family
-    set_fact:
-      ntp_service_name: ntpd
-    when: ansible_os_family in ['RedHat', 'Suse']
-
-- name: set chrony daemon name RedHat and Ubuntu based OSs
-  block:
-    - name: set chronyd daemon name for RedHat based OSs
-      set_fact:
-        chrony_daemon_name: chronyd
-      when: ansible_os_family in ["RedHat", "Suse"]
-
-    - name: set chronyd daemon name for Ubuntu based OSs
-      set_fact:
-        chrony_daemon_name: chrony
-      when: ansible_os_family == "Debian"
-
-- name: set grafana_server_addr fact - ipv4
-  set_fact:
-    grafana_server_addr: "{{ hostvars[inventory_hostname]['ansible_all_ipv4_addresses'] | ips_in_ranges(public_network.split(',')) | first }}"
-  when:
-    - groups.get(grafana_server_group_name, []) | length > 0
-    - ip_version == 'ipv4'
-    - dashboard_enabled | bool
-    - inventory_hostname in groups[grafana_server_group_name]
-
-- name: set grafana_server_addr fact - ipv6
-  set_fact:
-    grafana_server_addr: "{{ hostvars[inventory_hostname]['ansible_all_ipv6_addresses'] | ips_in_ranges(public_network.split(',')) | last | ipwrap }}"
-  when:
-    - groups.get(grafana_server_group_name, []) | length > 0
-    - ip_version == 'ipv6'
-    - dashboard_enabled | bool
-    - inventory_hostname in groups[grafana_server_group_name]
-
-- name: set grafana_server_addr fact - ipv4 - (external instance)
-  set_fact:
-    grafana_server_addr: "{{ hostvars[groups.get(grafana_server_group_name, []) | first]['ansible_all_ipv4_addresses'] | ips_in_ranges(public_network.split(',')) | first }}"
-  when:
-    - groups.get(grafana_server_group_name, []) | length > 0
-    - ip_version == 'ipv4'
-    - dashboard_enabled | bool
-    - inventory_hostname not in groups[grafana_server_group_name]
-
-- name: set grafana_server_addr fact - ipv6 - (external instance)
-  set_fact:
-    grafana_server_addr: "{{ hostvars[groups.get(grafana_server_group_name, []) | first]['ansible_all_ipv6_addresses'] | ips_in_ranges(public_network.split(',')) | last | ipwrap }}"
-  when:
-    - groups.get(grafana_server_group_name, []) | length > 0
-    - ip_version == 'ipv6'
-    - dashboard_enabled | bool
-    - inventory_hostname not in groups[grafana_server_group_name]
-
 - name: set_fact use_new_ceph_iscsi package or old ceph-iscsi-config/cli
   set_fact:
     use_new_ceph_iscsi: "{{ (gateway_ip_list  == '0.0.0.0' and gateway_iqn | length == 0 and client_connections | length == 0 and rbd_devices | length == 0) | bool | ternary(true, false) }}"
+  when: iscsi_gw_group_name in group_names
+
+- name: set_fact ceph_run_cmd
+  set_fact:
+    ceph_run_cmd: "{{ container_binary + ' run --rm --net=host -v /etc/ceph:/etc/ceph:z -v /var/lib/ceph/:/var/lib/ceph/:z -v /var/log/ceph/:/var/log/ceph/:z --entrypoint=ceph ' + ceph_docker_registry + '/' + ceph_docker_image + ':' + ceph_docker_image_tag if containerized_deployment else 'ceph' }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: True
+  run_once: True
+  with_items:
+    - "{{ groups[mon_group_name] if groups[mon_group_name] | default([]) | length > 0 else [] }}"
+    - "{{ groups[mds_group_name] if groups[mds_group_name] | default([]) | length > 0 else [] }}"
+    - "{{ groups[client_group_name] if groups[client_group_name] | default([]) | length > 0 else [] }}"
+
+- name: set_fact ceph_admin_command
+  set_fact:
+    ceph_admin_command: "{{ hostvars[item]['ceph_run_cmd'] }} -n client.admin -k /etc/ceph/{{ cluster }}.client.admin.keyring"
+  delegate_to: "{{ item }}"
+  delegate_facts: True
+  run_once: True
+  with_items:
+    - "{{ groups[mon_group_name] if groups[mon_group_name] | default([]) | length > 0 else [] }}"
+    - "{{ groups[mds_group_name] if groups[mds_group_name] | default([]) | length > 0 else [] }}"
+    - "{{ groups[client_group_name] if groups[client_group_name] | default([]) | length > 0 else [] }}"
